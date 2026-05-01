@@ -1,9 +1,9 @@
 package app
 
 import (
+	"github.com/leandersteiner/go-waiting-room/internal/waitingroom"
 	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/app/command"
 	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/app/query"
-	"github.com/redis/go-redis/v9"
 )
 
 type App struct {
@@ -21,15 +21,15 @@ type Queries struct {
 	StreamRoomStatus query.StreamRoomStatusHandler
 }
 
-func New(rdb *redis.Client) *App {
+func New(repo waitingroom.Repository) *App {
 	return &App{
 		Commands: Commands{
-			JoinRoom:            command.NewJoinRoomHandler(rdb),
-			IssueAdmissionToken: command.NewIssueAdmissionTokenHandler(rdb),
+			JoinRoom:            command.NewJoinRoomHandler(repo),
+			IssueAdmissionToken: command.NewIssueAdmissionTokenHandler(repo),
 		},
 		Queries: Queries{
-			RoomStatus:       query.NewRoomStatusHandler(rdb),
-			StreamRoomStatus: query.NewStreamRoomStatusHandler(rdb),
+			RoomStatus:       query.NewRoomStatusHandler(repo),
+			StreamRoomStatus: query.NewStreamRoomStatusHandler(repo),
 		},
 	}
 }

@@ -2,11 +2,9 @@ package query
 
 import (
 	"context"
-	"errors"
-	"math"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/leandersteiner/go-waiting-room/internal/waitingroom"
 )
 
 type StreamRoomStatus struct {
@@ -21,7 +19,6 @@ type StreamRoomStatusResponse struct {
 	Position               int  `json:"position"`
 	Ahead                  int  `json:"ahead"`
 	EstimatedWaitInSeconds int  `json:"estimatedWaitInSeconds"`
-	QueueEnabled           bool `json:"queueEnabled"`
 	CanEnter               bool `json:"canEnter"`
 }
 
@@ -30,11 +27,11 @@ type StreamRoomStatusUpdate func(response StreamRoomStatusResponse) error
 type StreamRoomStatusHandler func(ctx context.Context, cmd StreamRoomStatus, update StreamRoomStatusUpdate) error
 
 type streamRoomStatusHandler struct {
-	rdb *redis.Client
+	repo waitingroom.Repository
 }
 
-func NewStreamRoomStatusHandler(rdb *redis.Client) StreamRoomStatusHandler {
-	return (&streamRoomStatusHandler{rdb: rdb}).Handle
+func NewStreamRoomStatusHandler(repo waitingroom.Repository) StreamRoomStatusHandler {
+	return (&streamRoomStatusHandler{repo: repo}).Handle
 }
 
 func (h *streamRoomStatusHandler) Handle(ctx context.Context, cmd StreamRoomStatus, update StreamRoomStatusUpdate) error {
@@ -71,38 +68,16 @@ func (h *streamRoomStatusHandler) sendUpdate(ctx context.Context, cmd StreamRoom
 }
 
 func (h *streamRoomStatusHandler) roomStatus(ctx context.Context, cmd StreamRoomStatus) (StreamRoomStatusResponse, error) {
-	sessionKey := "waitroom:" + cmd.TenantID + ":" + cmd.EventID + ":session:" + cmd.SessionID
-	admittedCounterKey := "waitroom:" + cmd.TenantID + ":" + cmd.EventID + ":admitted_counter"
-
-	position, err := h.rdb.Get(ctx, sessionKey).Int()
+	status, err := h.repo.GetSessionStatus(ctx, cmd.TenantID, cmd.EventID, cmd.SessionID)
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return StreamRoomStatusResponse{}, errors.New("session not found")
-		}
-
 		return StreamRoomStatusResponse{}, err
 	}
 
-	admitted, _ := h.rdb.Get(ctx, admittedCounterKey).Int()
-
-	const admissionsPerSecond = 5
-
-	ahead := position - admitted - 1
-	if ahead < 0 {
-		ahead = 0
-	}
-
-	remaining := position - admitted
-	if remaining < 0 {
-		remaining = 0
-	}
-
 	return StreamRoomStatusResponse{
-		ArrivalNumber:          position,
-		Position:               ahead + 1,
-		Ahead:                  ahead,
-		EstimatedWaitInSeconds: int(math.Ceil(float64(remaining) / admissionsPerSecond)),
-		QueueEnabled:           true,
-		CanEnter:               ahead == 0,
+		ArrivalNumber:          status.ArrivalNumber,
+		Position:               status.Position,
+		Ahead:                  status.Ahead,
+		EstimatedWaitInSeconds: status.EstimatedWaitInSeconds,
+		CanEnter:               status.CanEnter,
 	}, nil
 }

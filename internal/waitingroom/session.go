@@ -1,21 +1,12 @@
 package waitingroom
 
-import "time"
-
-type State string
-
-const (
-	Waiting  State = "waiting"
-	Admitted State = "admitted"
-	Expired  State = "expired"
-)
-
-type QueueSession struct {
-	tenantID      string
-	eventID       string
-	sessionID     string
-	arrivalNumber int
-	state         State
-	joinedAt      time.Time
-	admittedAt    time.Time
+type SessionStatus struct {
+	TenantID               string
+	EventID                string
+	SessionID              string
+	ArrivalNumber          int
+	Position               int
+	Ahead                  int
+	EstimatedWaitInSeconds int
+	CanEnter               bool
 }

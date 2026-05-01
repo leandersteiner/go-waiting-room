@@ -2,10 +2,8 @@ package query
 
 import (
 	"context"
-	"errors"
-	"math"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/leandersteiner/go-waiting-room/internal/waitingroom"
 )
 
 type RoomStatus struct {
@@ -22,32 +20,21 @@ type RoomStatusResponse struct {
 type RoomStatusHandler func(ctx context.Context, query RoomStatus) (RoomStatusResponse, error)
 
 type roomStatusHandler struct {
-	rdb *redis.Client
+	repo waitingroom.Repository
 }
 
-func NewRoomStatusHandler(rdb *redis.Client) RoomStatusHandler {
-	return (&roomStatusHandler{rdb: rdb}).Handle
+func NewRoomStatusHandler(repo waitingroom.Repository) RoomStatusHandler {
+	return (&roomStatusHandler{repo: repo}).Handle
 }
 
 func (h *roomStatusHandler) Handle(ctx context.Context, query RoomStatus) (RoomStatusResponse, error) {
-	sessionKey := "waitroom:" + query.TenantID + ":" + query.EventID + ":session:" + query.SessionID
-	admittedCounterKey := "waitroom:" + query.TenantID + ":" + query.EventID + ":admitted_counter"
-
-	position, err := h.rdb.Get(ctx, sessionKey).Int()
+	status, err := h.repo.GetSessionStatus(ctx, query.TenantID, query.EventID, query.SessionID)
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return RoomStatusResponse{}, errors.New("session not found")
-		}
-
 		return RoomStatusResponse{}, err
 	}
 
-	admitted, _ := h.rdb.Get(ctx, admittedCounterKey).Int()
-
-	const admissionsPerSecond = 5
-
 	return RoomStatusResponse{
-		Ahead:                  position - admitted - 1,
-		EstimatedWaitInSeconds: int(math.Ceil(float64(position-admitted) / admissionsPerSecond)),
+		Ahead:                  status.Ahead,
+		EstimatedWaitInSeconds: status.EstimatedWaitInSeconds,
 	}, nil
 }

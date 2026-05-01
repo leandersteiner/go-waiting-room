@@ -3,9 +3,9 @@ package command
 import (
 	"context"
 	"errors"
-	"math"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/leandersteiner/go-waiting-room/internal/waitingroom"
+	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/repository"
 )
 
 type JoinRoom struct {
@@ -24,50 +24,28 @@ type JoinRoomResponse struct {
 type JoinRoomHandler func(ctx context.Context, cmd JoinRoom) (JoinRoomResponse, error)
 
 type joinRoomHandler struct {
-	rdb *redis.Client
+	repo waitingroom.Repository
 }
 
-func NewJoinRoomHandler(rdb *redis.Client) JoinRoomHandler {
-	return (&joinRoomHandler{rdb: rdb}).Handle
+func NewJoinRoomHandler(repo waitingroom.Repository) JoinRoomHandler {
+	return (&joinRoomHandler{repo: repo}).Handle
 }
 
 func (h *joinRoomHandler) Handle(ctx context.Context, cmd JoinRoom) (JoinRoomResponse, error) {
-	sessionKey := "waitroom:" + cmd.TenantID + ":" + cmd.EventID + ":session:" + cmd.SessionID
-	arrivalCounterKey := "waitroom:" + cmd.TenantID + ":" + cmd.EventID + ":arrival_counter"
-	admittedCounterKey := "waitroom:" + cmd.TenantID + ":" + cmd.EventID + ":admitted_counter"
-
-	exists := true
-
-	position, err := h.rdb.Get(ctx, sessionKey).Int()
+	status, err := h.repo.JoinRoom(ctx, cmd.TenantID, cmd.EventID, cmd.SessionID)
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			exists = false
-		} else {
-			return JoinRoomResponse{}, err
+		if errors.Is(err, repository.ErrRoomNotFound) {
+			return JoinRoomResponse{
+				QueueEnabled: false,
+			}, nil
 		}
+		return JoinRoomResponse{}, err
 	}
-
-	if !exists && position == 0 {
-		newPosition, err := h.rdb.Incr(ctx, arrivalCounterKey).Result()
-		if err != nil {
-			return JoinRoomResponse{}, err
-		}
-		position = int(newPosition)
-
-		_, err = h.rdb.SetNX(ctx, sessionKey, position, 0).Result()
-		if err != nil {
-			return JoinRoomResponse{}, err
-		}
-	}
-
-	admitted, _ := h.rdb.Get(ctx, admittedCounterKey).Int()
-
-	const admissionsPerSecond = 5
 
 	return JoinRoomResponse{
-		ArrivalNumber:          position,
-		Ahead:                  position - admitted - 1,
-		EstimatedWaitInSeconds: int(math.Ceil(float64(position-admitted) / admissionsPerSecond)),
+		ArrivalNumber:          status.ArrivalNumber,
+		Ahead:                  status.Ahead,
+		EstimatedWaitInSeconds: status.EstimatedWaitInSeconds,
 		QueueEnabled:           true,
-	}, nil
+	}, err
 }

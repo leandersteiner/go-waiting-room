@@ -2,9 +2,8 @@ package command
 
 import (
 	"context"
-	"errors"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/leandersteiner/go-waiting-room/internal/waitingroom"
 )
 
 type IssueAdmissionToken struct {
@@ -14,53 +13,30 @@ type IssueAdmissionToken struct {
 }
 
 type IssueAdmissionTokenResponse struct {
-	TokenType   string
-	AccessToken string
-	ExpiresIn   int
+	TokenType string
+	Token     string
+	ExpiresIn int
 }
 
 type IssueAdmissionTokenHandler func(ctx context.Context, cmd IssueAdmissionToken) (IssueAdmissionTokenResponse, error)
 
 type issueAdmissionTokenHandler struct {
-	rdb *redis.Client
+	repo waitingroom.Repository
 }
 
-func NewIssueAdmissionTokenHandler(rdb *redis.Client) IssueAdmissionTokenHandler {
-	return (&issueAdmissionTokenHandler{rdb: rdb}).Handle
+func NewIssueAdmissionTokenHandler(repo waitingroom.Repository) IssueAdmissionTokenHandler {
+	return (&issueAdmissionTokenHandler{repo: repo}).Handle
 }
 
 func (h *issueAdmissionTokenHandler) Handle(ctx context.Context, cmd IssueAdmissionToken) (IssueAdmissionTokenResponse, error) {
-	sessionKey := "waitroom:" + cmd.TenantID + ":" + cmd.EventID + ":session:" + cmd.SessionID
-	admittedCounterKey := "waitroom:" + cmd.TenantID + ":" + cmd.EventID + ":admitted_counter"
-
-	position, err := h.rdb.Get(ctx, sessionKey).Int()
-	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return IssueAdmissionTokenResponse{}, errors.New("session not found")
-		}
-
-		return IssueAdmissionTokenResponse{}, err
-	}
-
-	admitted, _ := h.rdb.Get(ctx, admittedCounterKey).Int()
-
-	if position-1 > admitted {
-		return IssueAdmissionTokenResponse{}, errors.New("session not admitted")
-	}
-
-	err = h.rdb.Incr(ctx, admittedCounterKey).Err()
-	if err != nil {
-		return IssueAdmissionTokenResponse{}, err
-	}
-
-	err = h.rdb.Del(ctx, sessionKey).Err()
+	token, err := h.repo.IssueAdmissionToken(ctx, cmd.TenantID, cmd.EventID, cmd.SessionID)
 	if err != nil {
 		return IssueAdmissionTokenResponse{}, err
 	}
 
 	return IssueAdmissionTokenResponse{
-		TokenType:   "Bearer",
-		AccessToken: "accessToken",
-		ExpiresIn:   300,
+		TokenType: token.TokenType,
+		Token:     token.Token,
+		ExpiresIn: token.ExpiresIn,
 	}, nil
 }
