@@ -3,6 +3,7 @@ package app
 import (
 	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/app/command"
 	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/app/query"
+	"github.com/redis/go-redis/v9"
 )
 
 type App struct {
@@ -20,10 +21,10 @@ type Queries struct {
 	RoomStream query.RoomStreamHandler
 }
 
-func New() *App {
+func New(rdb *redis.Client) *App {
 	return &App{
 		Commands: Commands{
-			JoinRoom:            command.NewJoinRoomHandler(),
+			JoinRoom:            command.NewJoinRoomHandler(rdb),
 			IssueAdmissionToken: command.NewIssueAdmissionTokenHandler(),
 		},
 		Queries: Queries{
