@@ -83,6 +83,9 @@ func (s HTTPServer) GetRoomStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rc := http.NewResponseController(w)
+	// SSE responses are long-lived; the server-wide WriteTimeout is too short for this endpoint.
+	_ = rc.SetWriteDeadline(time.Time{})
+
 	started := false
 
 	err := s.App.Queries.StreamRoomStatus(r.Context(), query.StreamRoomStatus{
@@ -117,11 +120,24 @@ func (s HTTPServer) GetRoomStream(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s HTTPServer) IssueAdmissionToken(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	if strings.TrimSpace(tenantID) == "" {
+		http.Error(w, "tenantID is required", http.StatusBadRequest)
+		return
+	}
+	eventID := r.PathValue("eventID")
+	if strings.TrimSpace(eventID) == "" {
+		http.Error(w, "eventID is required", http.StatusBadRequest)
+		return
+	}
+
 	var request command.IssueAdmissionToken
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	request.TenantID = tenantID
+	request.EventID = eventID
 
 	response, err := s.App.Commands.IssueAdmissionToken(r.Context(), request)
 	if err != nil {
@@ -139,11 +155,24 @@ func (s HTTPServer) IssueAdmissionToken(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s HTTPServer) JoinRoom(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	if strings.TrimSpace(tenantID) == "" {
+		http.Error(w, "tenantID is required", http.StatusBadRequest)
+		return
+	}
+	eventID := r.PathValue("eventID")
+	if strings.TrimSpace(eventID) == "" {
+		http.Error(w, "eventID is required", http.StatusBadRequest)
+		return
+	}
+
 	var request command.JoinRoom
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	request.TenantID = tenantID
+	request.EventID = eventID
 
 	response, err := s.App.Commands.JoinRoom(r.Context(), request)
 	if err != nil {

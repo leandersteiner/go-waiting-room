@@ -291,6 +291,10 @@ func sessionKey(tenantID, eventID, sessionID string) string {
 	return roomKeyPrefix(tenantID, eventID) + ":session:" + sessionID
 }
 
+func tokenIssuedKey(tenantID, eventID, sessionID string) string {
+	return roomKeyPrefix(tenantID, eventID) + ":token_issued:" + sessionID
+}
+
 func roomKeyPrefix(tenantID, eventID string) string {
 	return redisKeyPrefix + ":" + tenantID + ":" + eventID
 }
