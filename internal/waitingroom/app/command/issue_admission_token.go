@@ -44,8 +44,18 @@ func (h *issueAdmissionTokenHandler) Handle(ctx context.Context, cmd IssueAdmiss
 
 	admitted, _ := h.rdb.Get(ctx, admittedCounterKey).Int()
 
-	if position > admitted {
+	if position-1 > admitted {
 		return IssueAdmissionTokenResponse{}, errors.New("session not admitted")
+	}
+
+	err = h.rdb.Incr(ctx, admittedCounterKey).Err()
+	if err != nil {
+		return IssueAdmissionTokenResponse{}, err
+	}
+
+	err = h.rdb.Del(ctx, sessionKey).Err()
+	if err != nil {
+		return IssueAdmissionTokenResponse{}, err
 	}
 
 	return IssueAdmissionTokenResponse{
