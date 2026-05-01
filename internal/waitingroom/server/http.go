@@ -53,14 +53,14 @@ func (s HTTPServer) GetRoomStatus(w http.ResponseWriter, r *http.Request) {
 		SessionID: sessionID,
 	})
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 }
@@ -95,13 +95,13 @@ func (s HTTPServer) GetRoomStream(w http.ResponseWriter, r *http.Request) {
 func (s HTTPServer) IssueAdmissionToken(w http.ResponseWriter, r *http.Request) {
 	var request command.IssueAdmissionToken
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	response, err := s.App.Commands.IssueAdmissionToken(r.Context(), request)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -109,7 +109,7 @@ func (s HTTPServer) IssueAdmissionToken(w http.ResponseWriter, r *http.Request) 
 
 	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 }
@@ -117,13 +117,13 @@ func (s HTTPServer) IssueAdmissionToken(w http.ResponseWriter, r *http.Request) 
 func (s HTTPServer) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	var request command.JoinRoom
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	response, err := s.App.Commands.JoinRoom(r.Context(), request)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -131,7 +131,7 @@ func (s HTTPServer) JoinRoom(w http.ResponseWriter, r *http.Request) {
 
 	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 }
