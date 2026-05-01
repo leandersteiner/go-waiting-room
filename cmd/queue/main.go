@@ -27,10 +27,9 @@ func main() {
 	waitingroomApp := waitingroomapp.New(rdb)
 	waitingroomServer := server.NewHTTPServer(waitingroomApp)
 	err := waitingroomServer.Run(&http.Server{
-		Addr:         ":8080",
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  5 * time.Minute,
+		Addr:        ":8080",
+		ReadTimeout: 5 * time.Second,
+		IdleTimeout: 5 * time.Minute,
 	})
 	if err != nil {
 		panic(err)

@@ -17,8 +17,8 @@ type Commands struct {
 }
 
 type Queries struct {
-	RoomStatus query.RoomStatusHandler
-	RoomStream query.RoomStreamHandler
+	RoomStatus       query.RoomStatusHandler
+	StreamRoomStatus query.StreamRoomStatusHandler
 }
 
 func New(rdb *redis.Client) *App {
@@ -28,8 +28,8 @@ func New(rdb *redis.Client) *App {
 			IssueAdmissionToken: command.NewIssueAdmissionTokenHandler(rdb),
 		},
 		Queries: Queries{
-			RoomStatus: query.NewRoomStatusHandler(rdb),
-			RoomStream: query.NewRoomStreamHandler(),
+			RoomStatus:       query.NewRoomStatusHandler(rdb),
+			StreamRoomStatus: query.NewStreamRoomStatusHandler(rdb),
 		},
 	}
 }

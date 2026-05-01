@@ -66,29 +66,53 @@ func (s HTTPServer) GetRoomStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s HTTPServer) GetRoomStream(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	clientGone := r.Context().Done()
+	tenantID := r.PathValue("tenantID")
+	if strings.TrimSpace(tenantID) == "" {
+		http.Error(w, "tenantID is required", http.StatusBadRequest)
+		return
+	}
+	eventID := r.PathValue("eventID")
+	if strings.TrimSpace(eventID) == "" {
+		http.Error(w, "eventID is required", http.StatusBadRequest)
+		return
+	}
+	sessionID := r.PathValue("sessionID")
+	if strings.TrimSpace(sessionID) == "" {
+		http.Error(w, "sessionID is required", http.StatusBadRequest)
+		return
+	}
 
 	rc := http.NewResponseController(w)
-	t := time.NewTicker(1 * time.Second)
+	started := false
 
-	for {
-		select {
-		case <-clientGone:
-			return
-		case <-t.C:
-			_, err := fmt.Fprintf(w, "data: The time is %s\n\n", time.Now().Format(time.UnixDate))
-			if err != nil {
-				return
-			}
-			err = rc.Flush()
-			if err != nil {
-				return
-			}
+	err := s.App.Queries.StreamRoomStatus(r.Context(), query.StreamRoomStatus{
+		TenantID:       tenantID,
+		EventID:        eventID,
+		SessionID:      sessionID,
+		UpdateInterval: 3 * time.Second,
+	}, func(response query.StreamRoomStatusResponse) error {
+		if !started {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+			w.WriteHeader(http.StatusOK)
+			started = true
 		}
+
+		payload, err := json.Marshal(response)
+		if err != nil {
+			return err
+		}
+
+		_, err = fmt.Fprintf(w, "event: queue-status\ndata: %s\n\n", payload)
+		if err != nil {
+			return err
+		}
+
+		return rc.Flush()
+	})
+	if err != nil && !started {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
