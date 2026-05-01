@@ -2,151 +2,170 @@ package repository
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
-	"math"
+	"fmt"
 
 	"github.com/leandersteiner/go-waiting-room/internal/waitingroom"
 	"github.com/redis/go-redis/v9"
 )
 
-var ErrRoomNotFound = errors.New("room not found")
+const (
+	redisKeyPrefix = "waitroom"
+
+	defaultAdmissionsPerSecond = 50
+	defaultTokenTTLInSeconds   = 300
+
+	admissionTokenBytes = 32
+	bearerTokenType     = "Bearer"
+)
+
+var (
+	ErrRoomNotFound       = errors.New("room not found")
+	ErrSessionNotFound    = errors.New("session not found")
+	ErrSessionNotAdmitted = errors.New("session not admitted")
+)
 
 var _ waitingroom.Repository = (*RedisRepository)(nil)
 
-var arrivalCounterKey = func(tenantID string, eventID string) string {
-	return "waitroom:" + tenantID + ":" + eventID + ":arrival_counter"
-}
+var joinRoomScript = redis.NewScript(`
+local position = redis.call("GET", KEYS[1])
+if position then
+	return position
+end
 
-var admittedCounterKey = func(tenantID string, eventID string) string {
-	return "waitroom:" + tenantID + ":" + eventID + ":admitted_counter"
-}
+position = redis.call("INCR", KEYS[2])
+redis.call("SET", KEYS[1], position)
+return position
+`)
 
-var sessionKey = func(tenantID string, eventID string, sessionID string) string {
-	return "waitroom:" + tenantID + ":" + eventID + ":session:" + sessionID
-}
+var issueAdmissionTokenScript = redis.NewScript(`
+local position = redis.call("GET", KEYS[1])
+if not position then
+	return {0, 0}
+end
+
+position = tonumber(position)
+if not position then
+	return redis.error_reply("invalid session position")
+end
+
+local admitted = tonumber(redis.call("GET", KEYS[2]) or "0")
+if not admitted then
+	return redis.error_reply("invalid admitted counter")
+end
+
+if position - 1 > admitted then
+	return {1, admitted}
+end
+
+local updatedAdmitted = redis.call("INCR", KEYS[2])
+redis.call("DEL", KEYS[1])
+return {2, updatedAdmitted}
+`)
+
+type tokenGenerator func() (string, error)
 
 type RedisRepository struct {
-	rdb *redis.Client
+	rdb      *redis.Client
+	newToken tokenGenerator
 }
 
 func NewRedisRepository(rdb *redis.Client) *RedisRepository {
-	return &RedisRepository{rdb: rdb}
+	if rdb == nil {
+		panic("repository: redis client is nil")
+	}
+
+	return &RedisRepository{
+		rdb:      rdb,
+		newToken: generateAdmissionToken,
+	}
 }
 
-func (r *RedisRepository) IssueAdmissionToken(ctx context.Context, tenantID string, eventID string, sessionID string) (waitingroom.AdmissionToken, error) {
+func (r *RedisRepository) IssueAdmissionToken(ctx context.Context, tenantID, eventID, sessionID string) (waitingroom.AdmissionToken, error) {
 	room, err := r.GetRoom(ctx, tenantID, eventID)
 	if err != nil {
-		return waitingroom.AdmissionToken{}, ErrRoomNotFound
+		return waitingroom.AdmissionToken{}, fmt.Errorf("get waiting room: %w", err)
 	}
 
-	position, err := r.rdb.Get(ctx, sessionKey(tenantID, eventID, sessionID)).Int()
+	token, err := r.newToken()
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return waitingroom.AdmissionToken{}, errors.New("session not found")
-		}
-
-		return waitingroom.AdmissionToken{}, err
+		return waitingroom.AdmissionToken{}, fmt.Errorf("generate admission token: %w", err)
 	}
 
-	admitted, _ := r.rdb.Get(ctx, admittedCounterKey(tenantID, eventID)).Int()
-
-	if position-1 > admitted {
-		return waitingroom.AdmissionToken{}, errors.New("session not admitted")
+	keys := []string{
+		sessionKey(tenantID, eventID, sessionID),
+		admittedCounterKey(tenantID, eventID),
 	}
-
-	err = r.rdb.Incr(ctx, admittedCounterKey(tenantID, eventID)).Err()
+	result, err := issueAdmissionTokenScript.Run(ctx, r.rdb, keys).Int64Slice()
 	if err != nil {
-		return waitingroom.AdmissionToken{}, err
+		return waitingroom.AdmissionToken{}, fmt.Errorf("issue admission token: %w", err)
+	}
+	if len(result) != 2 {
+		return waitingroom.AdmissionToken{}, fmt.Errorf("issue admission token: unexpected redis result length %d", len(result))
 	}
 
-	err = r.rdb.Del(ctx, sessionKey(tenantID, eventID, sessionID)).Err()
-	if err != nil {
-		return waitingroom.AdmissionToken{}, err
+	switch result[0] {
+	case 0:
+		return waitingroom.AdmissionToken{}, ErrSessionNotFound
+	case 1:
+		return waitingroom.AdmissionToken{}, ErrSessionNotAdmitted
+	case 2:
+		return waitingroom.AdmissionToken{
+			TenantID:  tenantID,
+			EventID:   eventID,
+			SessionID: sessionID,
+			TokenType: bearerTokenType,
+			Token:     token,
+			ExpiresIn: room.TokenPolicy.TokenTTLInSeconds,
+		}, nil
+	default:
+		return waitingroom.AdmissionToken{}, fmt.Errorf("issue admission token: unexpected redis status %d", result[0])
 	}
-
-	return waitingroom.AdmissionToken{
-		TokenType: "Bearer",
-		Token:     "accessToken",
-		ExpiresIn: room.TokenPolicy.TokenTTLInSeconds,
-	}, nil
 }
 
-func (r *RedisRepository) JoinRoom(ctx context.Context, tenantID string, eventID string, sessionID string) (waitingroom.SessionStatus, error) {
+func (r *RedisRepository) JoinRoom(ctx context.Context, tenantID, eventID, sessionID string) (waitingroom.SessionStatus, error) {
 	room, err := r.GetRoom(ctx, tenantID, eventID)
 	if err != nil {
-		return waitingroom.SessionStatus{}, ErrRoomNotFound
+		return waitingroom.SessionStatus{}, fmt.Errorf("get waiting room: %w", err)
 	}
 
-	exists := true
-
-	position, err := r.rdb.Get(ctx, sessionKey(tenantID, eventID, sessionID)).Int()
+	position, err := r.joinPosition(ctx, tenantID, eventID, sessionID)
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			exists = false
-		} else {
-			return waitingroom.SessionStatus{}, err
-		}
+		return waitingroom.SessionStatus{}, err
 	}
 
-	if !exists && position == 0 {
-		newPosition, err := r.rdb.Incr(ctx, arrivalCounterKey(tenantID, eventID)).Result()
-		if err != nil {
-			return waitingroom.SessionStatus{}, err
-		}
-		position = int(newPosition)
-
-		_, err = r.rdb.SetNX(ctx, sessionKey(tenantID, eventID, sessionID), position, 0).Result()
-		if err != nil {
-			return waitingroom.SessionStatus{}, err
-		}
+	admitted, err := r.counterValue(ctx, admittedCounterKey(tenantID, eventID))
+	if err != nil {
+		return waitingroom.SessionStatus{}, fmt.Errorf("read admitted counter: %w", err)
 	}
 
-	admitted, _ := r.rdb.Get(ctx, admittedCounterKey(tenantID, eventID)).Int()
-
-	ahead := position - admitted - 1
-	if ahead < 0 {
-		ahead = 0
-	}
-
-	remaining := position - admitted
-	if remaining < 0 {
-		remaining = 0
-	}
-
-	return waitingroom.SessionStatus{
-		TenantID:               tenantID,
-		EventID:                eventID,
-		SessionID:              sessionID,
-		ArrivalNumber:          position,
-		Position:               ahead + 1,
-		Ahead:                  ahead,
-		EstimatedWaitInSeconds: int(math.Ceil(float64(remaining) / float64(room.AdmissionPolicy.AdmissionsPerSeconds))),
-		CanEnter:               ahead == 0,
-	}, nil
+	return newSessionStatus(room, sessionID, position, admitted), nil
 }
 
-func (r *RedisRepository) GetRoom(ctx context.Context, tenantID string, eventID string) (waitingroom.WaitingRoom, error) {
+func (*RedisRepository) GetRoom(ctx context.Context, tenantID, eventID string) (waitingroom.WaitingRoom, error) {
 	return waitingroom.WaitingRoom{
 		TenantID: tenantID,
 		EventID:  eventID,
 		AdmissionPolicy: waitingroom.AdmissionPolicy{
-			AdmissionsPerSeconds: 50,
+			AdmissionsPerSeconds: defaultAdmissionsPerSecond,
 		},
 		TokenPolicy: waitingroom.TokenPolicy{
-			TokenTTLInSeconds: 300,
+			TokenTTLInSeconds: defaultTokenTTLInSeconds,
 		},
 	}, nil
 }
 
-func (r *RedisRepository) GetAdmissionProgress(ctx context.Context, tenantID string, eventID string) (waitingroom.AdmissionProgress, error) {
-	admitted, err := r.rdb.Get(ctx, admittedCounterKey(tenantID, eventID)).Int()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return waitingroom.AdmissionProgress{}, err
+func (r *RedisRepository) GetAdmissionProgress(ctx context.Context, tenantID, eventID string) (waitingroom.AdmissionProgress, error) {
+	arrived, err := r.counterValue(ctx, arrivalCounterKey(tenantID, eventID))
+	if err != nil {
+		return waitingroom.AdmissionProgress{}, fmt.Errorf("read arrival counter: %w", err)
 	}
 
-	arrived, err := r.rdb.Get(ctx, arrivalCounterKey(tenantID, eventID)).Int()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return waitingroom.AdmissionProgress{}, err
+	admitted, err := r.counterValue(ctx, admittedCounterKey(tenantID, eventID))
+	if err != nil {
+		return waitingroom.AdmissionProgress{}, fmt.Errorf("read admitted counter: %w", err)
 	}
 
 	return waitingroom.AdmissionProgress{
@@ -157,41 +176,134 @@ func (r *RedisRepository) GetAdmissionProgress(ctx context.Context, tenantID str
 	}, nil
 }
 
-func (r *RedisRepository) GetSessionStatus(ctx context.Context, tenantID string, eventID string, sessionID string) (waitingroom.SessionStatus, error) {
+func (r *RedisRepository) GetSessionStatus(ctx context.Context, tenantID, eventID, sessionID string) (waitingroom.SessionStatus, error) {
 	room, err := r.GetRoom(ctx, tenantID, eventID)
 	if err != nil {
-		return waitingroom.SessionStatus{}, err
+		return waitingroom.SessionStatus{}, fmt.Errorf("get waiting room: %w", err)
 	}
 
-	position, err := r.rdb.Get(ctx, sessionKey(tenantID, eventID, sessionID)).Int()
+	position, err := r.sessionPosition(ctx, tenantID, eventID, sessionID)
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return waitingroom.SessionStatus{}, errors.New("session not found")
-		}
-
 		return waitingroom.SessionStatus{}, err
 	}
 
-	admitted, _ := r.rdb.Get(ctx, admittedCounterKey(tenantID, eventID)).Int()
-
-	ahead := position - admitted - 1
-	if ahead < 0 {
-		ahead = 0
+	admitted, err := r.counterValue(ctx, admittedCounterKey(tenantID, eventID))
+	if err != nil {
+		return waitingroom.SessionStatus{}, fmt.Errorf("read admitted counter: %w", err)
 	}
 
-	remaining := position - admitted
-	if remaining < 0 {
-		remaining = 0
+	return newSessionStatus(room, sessionID, position, admitted), nil
+}
+
+func (r *RedisRepository) joinPosition(ctx context.Context, tenantID, eventID, sessionID string) (int, error) {
+	keys := []string{
+		sessionKey(tenantID, eventID, sessionID),
+		arrivalCounterKey(tenantID, eventID),
 	}
+
+	position, err := joinRoomScript.Run(ctx, r.rdb, keys).Int64()
+	if err != nil {
+		return 0, fmt.Errorf("join room: %w", err)
+	}
+
+	return int64ToInt(position)
+}
+
+func (r *RedisRepository) sessionPosition(ctx context.Context, tenantID, eventID, sessionID string) (int, error) {
+	position, err := r.rdb.Get(ctx, sessionKey(tenantID, eventID, sessionID)).Int()
+	if errors.Is(err, redis.Nil) {
+		return 0, ErrSessionNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read session position: %w", err)
+	}
+
+	return position, nil
+}
+
+func (r *RedisRepository) counterValue(ctx context.Context, key string) (int, error) {
+	value, err := r.rdb.Get(ctx, key).Int()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+
+	return value, nil
+}
+
+func newSessionStatus(room waitingroom.WaitingRoom, sessionID string, arrivalNumber, admitted int) waitingroom.SessionStatus {
+	ahead := nonNegative(arrivalNumber - admitted - 1)
+	remaining := nonNegative(arrivalNumber - admitted)
 
 	return waitingroom.SessionStatus{
-		TenantID:               tenantID,
-		EventID:                eventID,
+		TenantID:               room.TenantID,
+		EventID:                room.EventID,
 		SessionID:              sessionID,
-		ArrivalNumber:          position,
+		ArrivalNumber:          arrivalNumber,
 		Position:               ahead + 1,
 		Ahead:                  ahead,
-		EstimatedWaitInSeconds: int(math.Ceil(float64(remaining) / float64(room.AdmissionPolicy.AdmissionsPerSeconds))),
+		EstimatedWaitInSeconds: estimatedWaitInSeconds(remaining, room.AdmissionPolicy.AdmissionsPerSeconds),
 		CanEnter:               ahead == 0,
-	}, nil
+	}
 }
+
+func estimatedWaitInSeconds(remaining, admissionsPerSecond int) int {
+	if remaining <= 0 || admissionsPerSecond <= 0 {
+		return 0
+	}
+
+	seconds := remaining / admissionsPerSecond
+	if remaining%admissionsPerSecond != 0 {
+		seconds++
+	}
+
+	return seconds
+}
+
+func nonNegative(value int) int {
+	if value < 0 {
+		return 0
+	}
+
+	return value
+}
+
+func generateAdmissionToken() (string, error) {
+	token := make([]byte, admissionTokenBytes)
+	if _, err := rand.Read(token); err != nil {
+		return "", err
+	}
+
+	return base64.RawURLEncoding.EncodeToString(token), nil
+}
+
+func arrivalCounterKey(tenantID, eventID string) string {
+	return roomKeyPrefix(tenantID, eventID) + ":arrival_counter"
+}
+
+func admittedCounterKey(tenantID, eventID string) string {
+	return roomKeyPrefix(tenantID, eventID) + ":admitted_counter"
+}
+
+func sessionKey(tenantID, eventID, sessionID string) string {
+	return roomKeyPrefix(tenantID, eventID) + ":session:" + sessionID
+}
+
+func roomKeyPrefix(tenantID, eventID string) string {
+	return redisKeyPrefix + ":" + tenantID + ":" + eventID
+}
+
+func int64ToInt(value int64) (int, error) {
+	if value > int64(maxInt) || value < int64(minInt) {
+		return 0, fmt.Errorf("redis integer out of int range: %d", value)
+	}
+
+	return int(value), nil
+}
+
+const (
+	maxInt = int(^uint(0) >> 1)
+	minInt = -maxInt - 1
+)
