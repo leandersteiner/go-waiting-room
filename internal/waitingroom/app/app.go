@@ -25,7 +25,7 @@ func New(rdb *redis.Client) *App {
 	return &App{
 		Commands: Commands{
 			JoinRoom:            command.NewJoinRoomHandler(rdb),
-			IssueAdmissionToken: command.NewIssueAdmissionTokenHandler(),
+			IssueAdmissionToken: command.NewIssueAdmissionTokenHandler(rdb),
 		},
 		Queries: Queries{
 			RoomStatus: query.NewRoomStatusHandler(rdb),
