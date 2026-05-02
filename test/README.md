@@ -44,16 +44,23 @@ Run the full user flow:
 go run ./test/e2e-flow -sessions 100 -timeout 10m -open-rate 500
 ```
 
+When running through the Docker Compose load balancer, use the configured
+load-balancer port. The compose default is `8088`:
+
+```bash
+go run ./test/e2e-flow -base-url http://localhost:8088 -sessions 100 -timeout 10m -open-rate 500
+```
+
 The full flow joins every session, opens one SSE stream per session, waits for
-`canEnter=true`, calls `/queue/token`, and closes that user's stream. Add
-`-gate-streams` if you want every stream subscribed before any client processes
-events:
+`canEnter=true`, calls `/queue/token`, releases the admission lease, and closes
+that user's stream. Add `-gate-streams` if you want every stream subscribed
+before any client processes events:
 
 ```bash
 go run ./test/e2e-flow -sessions 100 -timeout 10m -open-rate 500 -gate-streams
 ```
 
-Queue progress advances in the worker through `admitted_counter`. The SSE
+Queue progress advances in the worker through bounded admission offers. The SSE
 endpoint emits regular status updates every 5 seconds and also reacts to worker
 admission progress notifications.
 

@@ -1,0 +1,8 @@
+.git
+.idea
+Dockerfile
+docker-compose.yml
+.env
+test
+docs
+README.md

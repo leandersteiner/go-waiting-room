@@ -1,0 +1,77 @@
+name: go-waiting-room
+
+x-app-env: &app-env
+  REDIS_ADDR: redis:6379
+  REDIS_PASSWORD: ""
+  REDIS_DB: "0"
+
+x-app-service: &app-service
+  image: go-waiting-room:local
+  build:
+    context: .
+  depends_on:
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  load-balancer:
+    image: go-waiting-room:local
+    build:
+      context: .
+    command: ["load-balancer"]
+    depends_on:
+      queue:
+        condition: service_started
+    ports:
+      - "${WAITROOM_HTTP_PORT:-8080}:8080"
+    environment:
+      LOAD_BALANCER_ADDR: ":8080"
+      LOAD_BALANCER_BACKEND_HOST: queue
+      LOAD_BALANCER_BACKEND_PORT: "8080"
+      LOAD_BALANCER_REFRESH_INTERVAL: 1s
+    restart: unless-stopped
+
+  redis:
+    image: redis:latest
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  queue:
+    <<: *app-service
+    command: ["queue"]
+    environment:
+      <<: *app-env
+      QUEUE_ADDR: ":8080"
+      ADMISSION_TOKEN_PRIVATE_KEY_BASE64: ${ADMISSION_TOKEN_PRIVATE_KEY_BASE64:?Set ADMISSION_TOKEN_PRIVATE_KEY_BASE64 to a base64 Ed25519 seed before starting compose}
+      ADMISSION_TOKEN_KEY_ID: ${ADMISSION_TOKEN_KEY_ID:-local-dev}
+      ADMISSION_TOKEN_ISSUER: go-waiting-room
+      ADMISSION_TOKEN_AUDIENCE: admission
+    expose:
+      - "8080"
+    scale: 3
+    deploy:
+      replicas: 3
+
+  worker:
+    <<: *app-service
+    command: ["worker"]
+    environment:
+      <<: *app-env
+      WORKER_TICK_INTERVAL: 1s
+      WORKER_LOCK_TTL: 5s
+    scale: 2
+    deploy:
+      replicas: 2
+
+volumes:
+  redis-data:
