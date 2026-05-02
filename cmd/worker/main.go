@@ -39,7 +39,7 @@ func main() {
 	worker, err := waitingroomworker.New(repo, waitingroomworker.Config{
 		OwnerID:      ownerID,
 		TickInterval: envDuration("WORKER_TICK_INTERVAL", time.Second),
-		LockTTL:      envDuration("WORKER_LOCK_TTL", 5*time.Second),
+		LockTTL:      envDuration("WORKER_LOCK_TTL", 10*time.Second),
 		Logger:       log.Default(),
 	})
 	if err != nil {

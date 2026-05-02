@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
 
+	"github.com/leandersteiner/go-waiting-room/internal/waitingroom"
 	waitingroomapp "github.com/leandersteiner/go-waiting-room/internal/waitingroom/app"
 	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/repository"
 	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/server"
@@ -27,10 +29,15 @@ func main() {
 		panic(err)
 	}
 
-	repo := repository.NewRedisRepository(rdb)
+	tokenIssuer, err := admissionTokenIssuerFromEnv()
+	if err != nil {
+		panic(err)
+	}
+
+	repo := repository.NewRedisRepository(rdb, repository.WithAdmissionTokenIssuer(tokenIssuer))
 	app := waitingroomapp.New(repo)
 	srv := server.NewHTTPServer(app)
-	err := srv.Run(&http.Server{
+	err = srv.Run(&http.Server{
 		Addr:         env("QUEUE_ADDR", ":8080"),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 15 * time.Second,
@@ -39,6 +46,25 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func admissionTokenIssuerFromEnv() (waitingroom.AdmissionTokenIssuer, error) {
+	keyID := env("ADMISSION_TOKEN_KEY_ID", "")
+	issuer := env("ADMISSION_TOKEN_ISSUER", "")
+	audience := env("ADMISSION_TOKEN_AUDIENCE", "")
+	privateKeyValue := env("ADMISSION_TOKEN_PRIVATE_KEY_BASE64", "")
+
+	if privateKeyValue == "" {
+		log.Print("ADMISSION_TOKEN_PRIVATE_KEY_BASE64 is not set; generated admission tokens will use an ephemeral development key")
+		return waitingroom.NewGeneratedJWTAdmissionTokenIssuer(keyID, issuer, audience)
+	}
+
+	privateKey, err := waitingroom.ParseEd25519PrivateKey(privateKeyValue)
+	if err != nil {
+		return nil, err
+	}
+
+	return waitingroom.NewJWTAdmissionTokenIssuer(privateKey, keyID, issuer, audience)
 }
 
 func env(key, fallback string) string {

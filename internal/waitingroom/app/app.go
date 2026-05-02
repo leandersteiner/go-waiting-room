@@ -7,8 +7,9 @@ import (
 )
 
 type App struct {
-	Commands Commands
-	Queries  Queries
+	Commands           Commands
+	Queries            Queries
+	AdmissionTokenKeys waitingroom.AdmissionTokenKeySetProvider
 }
 
 type Commands struct {
@@ -22,6 +23,8 @@ type Queries struct {
 }
 
 func New(repo waitingroom.Repository) *App {
+	keySetProvider, _ := repo.(waitingroom.AdmissionTokenKeySetProvider)
+
 	return &App{
 		Commands: Commands{
 			JoinRoom:            command.NewJoinRoomHandler(repo),
@@ -31,5 +34,6 @@ func New(repo waitingroom.Repository) *App {
 			RoomStatus:       query.NewRoomStatusHandler(repo),
 			StreamRoomStatus: query.NewStreamRoomStatusHandler(repo),
 		},
+		AdmissionTokenKeys: keySetProvider,
 	}
 }

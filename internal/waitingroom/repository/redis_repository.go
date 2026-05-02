@@ -2,8 +2,6 @@ package repository
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,11 +18,10 @@ const (
 	redisKeyPrefix = "waitroom"
 
 	defaultAdmissionsPerSecond = 50
-	defaultTokenTTLInSeconds   = 300
+	defaultTokenTTLInSeconds   = 900
 	defaultQueueEnabled        = true
 
-	admissionTokenBytes = 32
-	bearerTokenType     = "Bearer"
+	bearerTokenType = "Bearer"
 
 	roomConfigQueueEnabledField  = "queue_enabled"
 	roomConfigAdmissionRateField = "admission_rate"
@@ -57,12 +54,16 @@ return position
 var issueAdmissionTokenScript = redis.NewScript(`
 local existingToken = redis.call("GET", KEYS[3])
 if existingToken then
-	return {3, existingToken}
+	local ttl = redis.call("TTL", KEYS[3])
+	if ttl < 0 then
+		ttl = 0
+	end
+	return {3, existingToken, ttl}
 end
 
 local position = redis.call("GET", KEYS[1])
 if not position then
-	return {0, ""}
+	return {0, "", 0}
 end
 
 position = tonumber(position)
@@ -76,12 +77,12 @@ if not admitted then
 end
 
 if position > admitted then
-	return {1, ""}
+	return {1, "", 0}
 end
 
 redis.call("SET", KEYS[3], ARGV[1], "EX", ARGV[2])
 redis.call("DEL", KEYS[1])
-return {2, ARGV[1]}
+return {2, ARGV[1], tonumber(ARGV[2])}
 `)
 
 var advanceAdmissionScript = redis.NewScript(`
@@ -121,8 +122,11 @@ return {arrived, admitted, target}
 var acquireWorkerLockScript = redis.NewScript(`
 local owner = redis.call("GET", KEYS[1])
 if not owner then
-	redis.call("SET", KEYS[1], ARGV[1], "PX", ARGV[2], "NX")
-	return 1
+    local ok = redis.call("SET", KEYS[1], ARGV[1], "PX", ARGV[2], "NX")
+    if ok then
+        return 1
+    end
+    return 0
 end
 
 if owner == ARGV[1] then
@@ -133,11 +137,9 @@ end
 return 0
 `)
 
-type tokenGenerator func() (string, error)
-
 type RedisRepository struct {
 	rdb            *redis.Client
-	newToken       tokenGenerator
+	tokenIssuer    waitingroom.AdmissionTokenIssuer
 	subscriptionMu sync.Mutex
 	subscriptions  map[string]*sharedAdmissionProgressSubscription
 }
@@ -152,16 +154,36 @@ type AdvanceAdmissionResult struct {
 	Advanced int
 }
 
-func NewRedisRepository(rdb *redis.Client) *RedisRepository {
+type RedisRepositoryOption func(*RedisRepository)
+
+func WithAdmissionTokenIssuer(issuer waitingroom.AdmissionTokenIssuer) RedisRepositoryOption {
+	return func(r *RedisRepository) {
+		if issuer != nil {
+			r.tokenIssuer = issuer
+		}
+	}
+}
+
+func NewRedisRepository(rdb *redis.Client, options ...RedisRepositoryOption) *RedisRepository {
 	if rdb == nil {
 		panic("repository: redis client is nil")
 	}
 
-	return &RedisRepository{
+	tokenIssuer, err := waitingroom.NewGeneratedJWTAdmissionTokenIssuer("", "", "")
+	if err != nil {
+		panic(fmt.Sprintf("repository: generate admission token key: %s", err))
+	}
+
+	repo := &RedisRepository{
 		rdb:           rdb,
-		newToken:      generateAdmissionToken,
+		tokenIssuer:   tokenIssuer,
 		subscriptions: make(map[string]*sharedAdmissionProgressSubscription),
 	}
+	for _, option := range options {
+		option(repo)
+	}
+
+	return repo
 }
 
 func (r *RedisRepository) IssueAdmissionToken(ctx context.Context, tenantID, eventID, sessionID string) (waitingroom.AdmissionToken, error) {
@@ -173,7 +195,15 @@ func (r *RedisRepository) IssueAdmissionToken(ctx context.Context, tenantID, eve
 		return waitingroom.AdmissionToken{}, ErrRoomNotFound
 	}
 
-	token, err := r.newToken()
+	now := time.Now().UTC()
+	token, err := r.tokenIssuer.IssueAdmissionToken(waitingroom.AdmissionTokenClaims{
+		TenantID:  tenantID,
+		EventID:   eventID,
+		SessionID: sessionID,
+		IssuedAt:  now,
+		NotBefore: now,
+		ExpiresAt: now.Add(time.Duration(room.TokenPolicy.TokenTTLInSeconds) * time.Second),
+	})
 	if err != nil {
 		return waitingroom.AdmissionToken{}, fmt.Errorf("generate admission token: %w", err)
 	}
@@ -193,7 +223,7 @@ func (r *RedisRepository) IssueAdmissionToken(ctx context.Context, tenantID, eve
 	if err != nil {
 		return waitingroom.AdmissionToken{}, fmt.Errorf("issue admission token: %w", err)
 	}
-	if len(result) != 2 {
+	if len(result) != 3 {
 		return waitingroom.AdmissionToken{}, fmt.Errorf("issue admission token: unexpected redis result length %d", len(result))
 	}
 
@@ -212,6 +242,10 @@ func (r *RedisRepository) IssueAdmissionToken(ctx context.Context, tenantID, eve
 		if !ok {
 			return waitingroom.AdmissionToken{}, fmt.Errorf("issue admission token: invalid token result %T", result[1])
 		}
+		expiresIn, err := redisInt(result[2])
+		if err != nil {
+			return waitingroom.AdmissionToken{}, fmt.Errorf("issue admission token: invalid token ttl: %w", err)
+		}
 
 		return waitingroom.AdmissionToken{
 			TenantID:  tenantID,
@@ -219,7 +253,7 @@ func (r *RedisRepository) IssueAdmissionToken(ctx context.Context, tenantID, eve
 			SessionID: sessionID,
 			TokenType: bearerTokenType,
 			Token:     issuedToken,
-			ExpiresIn: room.TokenPolicy.TokenTTLInSeconds,
+			ExpiresIn: int(expiresIn),
 		}, nil
 	default:
 		return waitingroom.AdmissionToken{}, fmt.Errorf("issue admission token: unexpected redis status %d", status)
@@ -327,6 +361,15 @@ func (r *RedisRepository) GetAdmissionProgress(ctx context.Context, tenantID, ev
 		ArrivalCounter:  arrived,
 		AdmittedCounter: admitted,
 	}, nil
+}
+
+func (r *RedisRepository) AdmissionTokenJWKSet() waitingroom.JWKSet {
+	provider, ok := r.tokenIssuer.(waitingroom.AdmissionTokenKeySetProvider)
+	if !ok {
+		return waitingroom.JWKSet{}
+	}
+
+	return provider.AdmissionTokenJWKSet()
 }
 
 func (r *RedisRepository) AdvanceAdmission(ctx context.Context, tenantID, eventID string, amount int) (AdvanceAdmissionResult, error) {
@@ -599,15 +642,6 @@ func nonNegative(value int) int {
 	}
 
 	return value
-}
-
-func generateAdmissionToken() (string, error) {
-	token := make([]byte, admissionTokenBytes)
-	if _, err := rand.Read(token); err != nil {
-		return "", err
-	}
-
-	return base64.RawURLEncoding.EncodeToString(token), nil
 }
 
 type redisAdmissionProgressSubscription struct {

@@ -24,10 +24,25 @@ docker run --rm --name waitroom-redis -p 6379:6379 -d redis
 ```
 
 Optionally configure a room. Missing config falls back to an enabled queue with
-`admission_rate=50` and `token_ttl_seconds=300`.
+`admission_rate=50` and `token_ttl_seconds=900`.
 
 ```bash
 redis-cli HSET waitroom:load:main:config queue_enabled true admission_rate 500 version 1
+```
+
+Admission tokens are Ed25519-signed JWTs. Downstream services can verify them
+without calling the waiting room by caching the JWKS from:
+
+```text
+GET /.well-known/jwks.json
+```
+
+For production, configure a persistent Ed25519 signing key. The value can be a
+base64-encoded 32-byte seed or a 64-byte Go Ed25519 private key. If omitted, the
+queue service generates an ephemeral development key on startup.
+
+```bash
+openssl rand -base64 32
 ```
 
 Start both services:
@@ -44,6 +59,10 @@ REDIS_ADDR=localhost:6379
 REDIS_PASSWORD=
 REDIS_DB=0
 QUEUE_ADDR=:8080
+ADMISSION_TOKEN_PRIVATE_KEY_BASE64=
+ADMISSION_TOKEN_KEY_ID=
+ADMISSION_TOKEN_ISSUER=go-waiting-room
+ADMISSION_TOKEN_AUDIENCE=admission
 WORKER_ID=<hostname:pid by default>
 WORKER_TICK_INTERVAL=1s
 WORKER_LOCK_TTL=5s
