@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/leandersteiner/go-waiting-room/internal/waitingroom"
-	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/repository"
 )
 
 const sessionIDBytes = 18
@@ -32,12 +31,16 @@ type JoinRoomResponse struct {
 
 type JoinRoomHandler func(ctx context.Context, cmd JoinRoom) (JoinRoomResponse, error)
 
-type joinRoomHandler struct {
-	repo waitingroom.Repository
+type JoinRoomStore interface {
+	JoinRoom(ctx context.Context, tenantID string, eventID string, sessionID string) (waitingroom.SessionStatus, error)
 }
 
-func NewJoinRoomHandler(repo waitingroom.Repository) JoinRoomHandler {
-	return (&joinRoomHandler{repo: repo}).Handle
+type joinRoomHandler struct {
+	store JoinRoomStore
+}
+
+func NewJoinRoomHandler(store JoinRoomStore) JoinRoomHandler {
+	return (&joinRoomHandler{store: store}).Handle
 }
 
 func (h *joinRoomHandler) Handle(ctx context.Context, cmd JoinRoom) (JoinRoomResponse, error) {
@@ -49,9 +52,9 @@ func (h *joinRoomHandler) Handle(ctx context.Context, cmd JoinRoom) (JoinRoomRes
 		cmd.SessionID = sessionID
 	}
 
-	status, err := h.repo.JoinRoom(ctx, cmd.TenantID, cmd.EventID, cmd.SessionID)
+	status, err := h.store.JoinRoom(ctx, cmd.TenantID, cmd.EventID, cmd.SessionID)
 	if err != nil {
-		if errors.Is(err, repository.ErrRoomNotFound) {
+		if errors.Is(err, waitingroom.ErrRoomNotFound) {
 			return JoinRoomResponse{
 				QueueEnabled: false,
 			}, nil

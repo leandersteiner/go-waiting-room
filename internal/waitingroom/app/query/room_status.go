@@ -22,16 +22,20 @@ type RoomStatusResponse struct {
 
 type RoomStatusHandler func(ctx context.Context, query RoomStatus) (RoomStatusResponse, error)
 
-type roomStatusHandler struct {
-	repo waitingroom.Repository
+type SessionStatusStore interface {
+	GetSessionStatus(ctx context.Context, tenantID string, eventID string, sessionID string) (waitingroom.SessionStatus, error)
 }
 
-func NewRoomStatusHandler(repo waitingroom.Repository) RoomStatusHandler {
-	return (&roomStatusHandler{repo: repo}).Handle
+type roomStatusHandler struct {
+	store SessionStatusStore
+}
+
+func NewRoomStatusHandler(store SessionStatusStore) RoomStatusHandler {
+	return (&roomStatusHandler{store: store}).Handle
 }
 
 func (h *roomStatusHandler) Handle(ctx context.Context, query RoomStatus) (RoomStatusResponse, error) {
-	status, err := h.repo.GetSessionStatus(ctx, query.TenantID, query.EventID, query.SessionID)
+	status, err := h.store.GetSessionStatus(ctx, query.TenantID, query.EventID, query.SessionID)
 	if err != nil {
 		return RoomStatusResponse{}, err
 	}

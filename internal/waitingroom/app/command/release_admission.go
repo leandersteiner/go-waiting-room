@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-
-	"github.com/leandersteiner/go-waiting-room/internal/waitingroom"
 )
 
 var ErrInvalidReleaseAdmission = errors.New("sessionID and tokenID are required")
@@ -23,12 +21,16 @@ type ReleaseAdmissionResponse struct {
 
 type ReleaseAdmissionHandler func(ctx context.Context, cmd ReleaseAdmission) (ReleaseAdmissionResponse, error)
 
-type releaseAdmissionHandler struct {
-	repo waitingroom.Repository
+type AdmissionReleaseStore interface {
+	ReleaseAdmission(ctx context.Context, tenantID string, eventID string, sessionID string, tokenID string) (bool, error)
 }
 
-func NewReleaseAdmissionHandler(repo waitingroom.Repository) ReleaseAdmissionHandler {
-	return (&releaseAdmissionHandler{repo: repo}).Handle
+type releaseAdmissionHandler struct {
+	store AdmissionReleaseStore
+}
+
+func NewReleaseAdmissionHandler(store AdmissionReleaseStore) ReleaseAdmissionHandler {
+	return (&releaseAdmissionHandler{store: store}).Handle
 }
 
 func (h *releaseAdmissionHandler) Handle(ctx context.Context, cmd ReleaseAdmission) (ReleaseAdmissionResponse, error) {
@@ -36,7 +38,7 @@ func (h *releaseAdmissionHandler) Handle(ctx context.Context, cmd ReleaseAdmissi
 		return ReleaseAdmissionResponse{}, ErrInvalidReleaseAdmission
 	}
 
-	released, err := h.repo.ReleaseAdmission(ctx, cmd.TenantID, cmd.EventID, cmd.SessionID, cmd.TokenID)
+	released, err := h.store.ReleaseAdmission(ctx, cmd.TenantID, cmd.EventID, cmd.SessionID, cmd.TokenID)
 	if err != nil {
 		return ReleaseAdmissionResponse{}, err
 	}

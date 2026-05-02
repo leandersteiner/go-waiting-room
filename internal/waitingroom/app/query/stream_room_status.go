@@ -27,11 +27,11 @@ type StreamRoomStatusUpdate func(response StreamRoomStatusResponse) error
 type StreamRoomStatusHandler func(ctx context.Context, cmd StreamRoomStatus, update StreamRoomStatusUpdate) error
 
 type streamRoomStatusHandler struct {
-	repo waitingroom.Repository
+	store SessionStatusStore
 }
 
-func NewStreamRoomStatusHandler(repo waitingroom.Repository) StreamRoomStatusHandler {
-	return (&streamRoomStatusHandler{repo: repo}).Handle
+func NewStreamRoomStatusHandler(store SessionStatusStore) StreamRoomStatusHandler {
+	return (&streamRoomStatusHandler{store: store}).Handle
 }
 
 func (h *streamRoomStatusHandler) Handle(ctx context.Context, cmd StreamRoomStatus, update StreamRoomStatusUpdate) error {
@@ -40,7 +40,7 @@ func (h *streamRoomStatusHandler) Handle(ctx context.Context, cmd StreamRoomStat
 	}
 
 	var updates <-chan waitingroom.AdmissionProgress
-	if subscriber, ok := h.repo.(waitingroom.AdmissionProgressSubscriber); ok {
+	if subscriber, ok := h.store.(waitingroom.AdmissionProgressSubscriber); ok {
 		subscription, err := subscriber.SubscribeAdmissionProgress(ctx, cmd.TenantID, cmd.EventID)
 		if err == nil {
 			defer subscription.Close()
@@ -85,7 +85,7 @@ func (h *streamRoomStatusHandler) sendUpdate(ctx context.Context, cmd StreamRoom
 }
 
 func (h *streamRoomStatusHandler) roomStatus(ctx context.Context, cmd StreamRoomStatus) (StreamRoomStatusResponse, error) {
-	status, err := h.repo.GetSessionStatus(ctx, cmd.TenantID, cmd.EventID, cmd.SessionID)
+	status, err := h.store.GetSessionStatus(ctx, cmd.TenantID, cmd.EventID, cmd.SessionID)
 	if err != nil {
 		return StreamRoomStatusResponse{}, err
 	}

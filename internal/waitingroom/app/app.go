@@ -23,7 +23,14 @@ type Queries struct {
 	StreamRoomStatus query.StreamRoomStatusHandler
 }
 
-func New(repo waitingroom.Repository) *App {
+type Repository interface {
+	command.JoinRoomStore
+	command.AdmissionTokenStore
+	command.AdmissionReleaseStore
+	query.SessionStatusStore
+}
+
+func New(repo Repository) *App {
 	keySetProvider, _ := repo.(waitingroom.AdmissionTokenKeySetProvider)
 
 	return &App{

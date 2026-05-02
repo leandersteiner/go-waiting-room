@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/leandersteiner/go-waiting-room/internal/waitingroom"
-	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/repository"
 )
 
 const (
@@ -20,9 +19,9 @@ const (
 
 type Repository interface {
 	TryAcquireWorkerLock(ctx context.Context, owner string, ttl time.Duration) (bool, error)
-	ListRooms(ctx context.Context) ([]repository.RoomRef, error)
+	ListRooms(ctx context.Context) ([]waitingroom.RoomRef, error)
 	GetRoom(ctx context.Context, tenantID string, eventID string) (waitingroom.WaitingRoom, error)
-	AdvanceAdmission(ctx context.Context, tenantID string, eventID string, request repository.AdvanceAdmissionRequest) (repository.AdvanceAdmissionResult, error)
+	AdvanceAdmission(ctx context.Context, tenantID string, eventID string, request waitingroom.AdmissionAdvanceRequest) (waitingroom.AdmissionAdvanceResult, error)
 }
 
 type Config struct {
@@ -112,7 +111,7 @@ func (w *Worker) tick(ctx context.Context, elapsed time.Duration) error {
 		seen[key] = struct{}{}
 
 		room, err := w.repo.GetRoom(ctx, roomRef.TenantID, roomRef.EventID)
-		if errors.Is(err, repository.ErrRoomNotFound) {
+		if errors.Is(err, waitingroom.ErrRoomNotFound) {
 			delete(w.credits, key)
 			continue
 		}
@@ -130,11 +129,7 @@ func (w *Worker) tick(ctx context.Context, elapsed time.Duration) error {
 			continue
 		}
 
-		result, err := w.repo.AdvanceAdmission(ctx, roomRef.TenantID, roomRef.EventID, repository.AdvanceAdmissionRequest{
-			Amount:                     amount,
-			MaxActiveAdmissions:        room.AdmissionPolicy.MaxActiveAdmissions,
-			AdmissionOfferTTLInSeconds: room.AdmissionPolicy.AdmissionOfferTTLInSeconds,
-		})
+		result, err := w.repo.AdvanceAdmission(ctx, roomRef.TenantID, roomRef.EventID, room.NewAdmissionAdvanceRequest(amount))
 		if err != nil {
 			w.logger.Printf("advance room tenant=%s event=%s failed: %s", roomRef.TenantID, roomRef.EventID, err)
 			continue
@@ -174,6 +169,6 @@ func (w *Worker) admissionAmount(key string, admissionsPerSecond int, elapsed ti
 	return amount
 }
 
-func roomKey(room repository.RoomRef) string {
+func roomKey(room waitingroom.RoomRef) string {
 	return fmt.Sprintf("%s:%s", room.TenantID, room.EventID)
 }

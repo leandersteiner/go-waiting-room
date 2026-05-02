@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/leandersteiner/go-waiting-room/internal/waitingroom"
 	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/app"
 	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/app/command"
 	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/app/query"
-	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/repository"
 )
 
 type HTTPServer struct {
@@ -253,15 +253,15 @@ func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, command.ErrInvalidReleaseAdmission):
 		http.Error(w, err.Error(), http.StatusBadRequest)
-	case errors.Is(err, repository.ErrRoomNotFound):
+	case errors.Is(err, waitingroom.ErrRoomNotFound):
 		http.Error(w, err.Error(), http.StatusNotFound)
-	case errors.Is(err, repository.ErrSessionNotFound):
+	case errors.Is(err, waitingroom.ErrSessionNotFound):
 		http.Error(w, err.Error(), http.StatusNotFound)
-	case errors.Is(err, repository.ErrSessionNotAdmitted):
+	case errors.Is(err, waitingroom.ErrSessionNotAdmitted):
 		http.Error(w, err.Error(), http.StatusConflict)
-	case errors.Is(err, repository.ErrAdmissionCapacityFull):
+	case errors.Is(err, waitingroom.ErrAdmissionCapacityFull):
 		http.Error(w, err.Error(), http.StatusConflict)
-	case errors.Is(err, repository.ErrAdmissionLeaseMismatch):
+	case errors.Is(err, waitingroom.ErrAdmissionLeaseMismatch):
 		http.Error(w, err.Error(), http.StatusConflict)
 	default:
 		http.Error(w, err.Error(), http.StatusInternalServerError)

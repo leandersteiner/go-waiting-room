@@ -21,16 +21,20 @@ type IssueAdmissionTokenResponse struct {
 
 type IssueAdmissionTokenHandler func(ctx context.Context, cmd IssueAdmissionToken) (IssueAdmissionTokenResponse, error)
 
-type issueAdmissionTokenHandler struct {
-	repo waitingroom.Repository
+type AdmissionTokenStore interface {
+	IssueAdmissionToken(ctx context.Context, tenantID string, eventID string, sessionID string) (waitingroom.AdmissionToken, error)
 }
 
-func NewIssueAdmissionTokenHandler(repo waitingroom.Repository) IssueAdmissionTokenHandler {
-	return (&issueAdmissionTokenHandler{repo: repo}).Handle
+type issueAdmissionTokenHandler struct {
+	store AdmissionTokenStore
+}
+
+func NewIssueAdmissionTokenHandler(store AdmissionTokenStore) IssueAdmissionTokenHandler {
+	return (&issueAdmissionTokenHandler{store: store}).Handle
 }
 
 func (h *issueAdmissionTokenHandler) Handle(ctx context.Context, cmd IssueAdmissionToken) (IssueAdmissionTokenResponse, error) {
-	token, err := h.repo.IssueAdmissionToken(ctx, cmd.TenantID, cmd.EventID, cmd.SessionID)
+	token, err := h.store.IssueAdmissionToken(ctx, cmd.TenantID, cmd.EventID, cmd.SessionID)
 	if err != nil {
 		return IssueAdmissionTokenResponse{}, err
 	}

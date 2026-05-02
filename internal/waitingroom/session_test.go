@@ -1,21 +1,17 @@
-package repository
+package waitingroom
 
-import (
-	"testing"
+import "testing"
 
-	"github.com/leandersteiner/go-waiting-room/internal/waitingroom"
-)
-
-func TestNewSessionStatus(t *testing.T) {
-	room := waitingroom.WaitingRoom{
+func TestWaitingRoomSessionStatus(t *testing.T) {
+	room := WaitingRoom{
 		TenantID: "tenant-1",
 		EventID:  "event-1",
-		AdmissionPolicy: waitingroom.AdmissionPolicy{
+		AdmissionPolicy: AdmissionPolicy{
 			AdmissionsPerSeconds: 50,
 		},
 	}
 
-	status := newSessionStatus(room, "session-1", 125, 100)
+	status := room.SessionStatus("session-1", 125, 100)
 
 	if status.TenantID != "tenant-1" {
 		t.Fatalf("TenantID = %q, want %q", status.TenantID, "tenant-1")
@@ -43,16 +39,16 @@ func TestNewSessionStatus(t *testing.T) {
 	}
 }
 
-func TestNewSessionStatusAdmittedSession(t *testing.T) {
-	room := waitingroom.WaitingRoom{
+func TestWaitingRoomSessionStatusAdmittedSession(t *testing.T) {
+	room := WaitingRoom{
 		TenantID: "tenant-1",
 		EventID:  "event-1",
-		AdmissionPolicy: waitingroom.AdmissionPolicy{
+		AdmissionPolicy: AdmissionPolicy{
 			AdmissionsPerSeconds: 50,
 		},
 	}
 
-	status := newSessionStatus(room, "session-1", 10, 10)
+	status := room.SessionStatus("session-1", 10, 10)
 
 	if status.Position != 0 {
 		t.Fatalf("Position = %d, want %d", status.Position, 0)
@@ -68,16 +64,16 @@ func TestNewSessionStatusAdmittedSession(t *testing.T) {
 	}
 }
 
-func TestNewSessionStatusFrontOfQueueBeforeWorkerAdmission(t *testing.T) {
-	room := waitingroom.WaitingRoom{
+func TestWaitingRoomSessionStatusFrontOfQueueBeforeWorkerAdmission(t *testing.T) {
+	room := WaitingRoom{
 		TenantID: "tenant-1",
 		EventID:  "event-1",
-		AdmissionPolicy: waitingroom.AdmissionPolicy{
+		AdmissionPolicy: AdmissionPolicy{
 			AdmissionsPerSeconds: 50,
 		},
 	}
 
-	status := newSessionStatus(room, "session-1", 1, 0)
+	status := room.SessionStatus("session-1", 1, 0)
 
 	if status.Position != 1 {
 		t.Fatalf("Position = %d, want %d", status.Position, 1)

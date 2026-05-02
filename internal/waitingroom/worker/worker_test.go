@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/leandersteiner/go-waiting-room/internal/waitingroom"
-	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/repository"
 )
 
 func TestTickRequiresLeadership(t *testing.T) {
@@ -27,7 +26,7 @@ func TestTickRequiresLeadership(t *testing.T) {
 func TestTickAccumulatesFractionalAdmissionCredits(t *testing.T) {
 	repo := &fakeRepository{
 		leader: true,
-		rooms:  []repository.RoomRef{{TenantID: "tenant-1", EventID: "event-1"}},
+		rooms:  []waitingroom.RoomRef{{TenantID: "tenant-1", EventID: "event-1"}},
 		room: waitingroom.WaitingRoom{
 			TenantID:     "tenant-1",
 			EventID:      "event-1",
@@ -72,7 +71,7 @@ func newTestWorker(t *testing.T, repo Repository) *Worker {
 
 type fakeRepository struct {
 	leader         bool
-	rooms          []repository.RoomRef
+	rooms          []waitingroom.RoomRef
 	room           waitingroom.WaitingRoom
 	listCalls      int
 	advanceAmounts []int
@@ -82,7 +81,7 @@ func (r *fakeRepository) TryAcquireWorkerLock(context.Context, string, time.Dura
 	return r.leader, nil
 }
 
-func (r *fakeRepository) ListRooms(context.Context) ([]repository.RoomRef, error) {
+func (r *fakeRepository) ListRooms(context.Context) ([]waitingroom.RoomRef, error) {
 	r.listCalls++
 	return r.rooms, nil
 }
@@ -91,9 +90,9 @@ func (r *fakeRepository) GetRoom(context.Context, string, string) (waitingroom.W
 	return r.room, nil
 }
 
-func (r *fakeRepository) AdvanceAdmission(_ context.Context, tenantID string, eventID string, request repository.AdvanceAdmissionRequest) (repository.AdvanceAdmissionResult, error) {
+func (r *fakeRepository) AdvanceAdmission(_ context.Context, tenantID string, eventID string, request waitingroom.AdmissionAdvanceRequest) (waitingroom.AdmissionAdvanceResult, error) {
 	r.advanceAmounts = append(r.advanceAmounts, request.Amount)
-	return repository.AdvanceAdmissionResult{
+	return waitingroom.AdmissionAdvanceResult{
 		Progress: waitingroom.AdmissionProgress{
 			TenantID:        tenantID,
 			EventID:         eventID,
