@@ -36,7 +36,16 @@ func NewStreamRoomStatusHandler(repo waitingroom.Repository) StreamRoomStatusHan
 
 func (h *streamRoomStatusHandler) Handle(ctx context.Context, cmd StreamRoomStatus, update StreamRoomStatusUpdate) error {
 	if cmd.UpdateInterval <= 0 {
-		cmd.UpdateInterval = time.Second
+		cmd.UpdateInterval = 5 * time.Second
+	}
+
+	var updates <-chan waitingroom.AdmissionProgress
+	if subscriber, ok := h.repo.(waitingroom.AdmissionProgressSubscriber); ok {
+		subscription, err := subscriber.SubscribeAdmissionProgress(ctx, cmd.TenantID, cmd.EventID)
+		if err == nil {
+			defer subscription.Close()
+			updates = subscription.Updates()
+		}
 	}
 
 	if err := h.sendUpdate(ctx, cmd, update); err != nil {
@@ -50,6 +59,14 @@ func (h *streamRoomStatusHandler) Handle(ctx context.Context, cmd StreamRoomStat
 		select {
 		case <-ctx.Done():
 			return nil
+		case _, ok := <-updates:
+			if !ok {
+				updates = nil
+				continue
+			}
+			if err := h.sendUpdate(ctx, cmd, update); err != nil {
+				return err
+			}
 		case <-ticker.C:
 			if err := h.sendUpdate(ctx, cmd, update); err != nil {
 				return err

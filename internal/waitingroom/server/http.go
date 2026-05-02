@@ -2,7 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/app"
 	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/app/command"
 	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/app/query"
+	"github.com/leandersteiner/go-waiting-room/internal/waitingroom/repository"
 )
 
 type HTTPServer struct {
@@ -53,7 +56,7 @@ func (s HTTPServer) GetRoomStatus(w http.ResponseWriter, r *http.Request) {
 		SessionID: sessionID,
 	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, err)
 		return
 	}
 
@@ -92,7 +95,7 @@ func (s HTTPServer) GetRoomStream(w http.ResponseWriter, r *http.Request) {
 		TenantID:       tenantID,
 		EventID:        eventID,
 		SessionID:      sessionID,
-		UpdateInterval: 3 * time.Second,
+		UpdateInterval: 5 * time.Second,
 	}, func(response query.StreamRoomStatusResponse) error {
 		if !started {
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -115,7 +118,7 @@ func (s HTTPServer) GetRoomStream(w http.ResponseWriter, r *http.Request) {
 		return rc.Flush()
 	})
 	if err != nil && !started {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, err)
 	}
 }
 
@@ -132,7 +135,7 @@ func (s HTTPServer) IssueAdmissionToken(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var request command.IssueAdmissionToken
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+	if err := decodeJSONBody(r, &request); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -141,7 +144,7 @@ func (s HTTPServer) IssueAdmissionToken(w http.ResponseWriter, r *http.Request) 
 
 	response, err := s.App.Commands.IssueAdmissionToken(r.Context(), request)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, err)
 		return
 	}
 
@@ -167,7 +170,7 @@ func (s HTTPServer) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var request command.JoinRoom
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+	if err := decodeJSONBody(r, &request); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -176,7 +179,7 @@ func (s HTTPServer) JoinRoom(w http.ResponseWriter, r *http.Request) {
 
 	response, err := s.App.Commands.JoinRoom(r.Context(), request)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, err)
 		return
 	}
 
@@ -186,5 +189,27 @@ func (s HTTPServer) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+}
+
+func decodeJSONBody(r *http.Request, destination any) error {
+	err := json.NewDecoder(r.Body).Decode(destination)
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+
+	return err
+}
+
+func writeError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, repository.ErrRoomNotFound):
+		http.Error(w, err.Error(), http.StatusNotFound)
+	case errors.Is(err, repository.ErrSessionNotFound):
+		http.Error(w, err.Error(), http.StatusNotFound)
+	case errors.Is(err, repository.ErrSessionNotAdmitted):
+		http.Error(w, err.Error(), http.StatusConflict)
+	default:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

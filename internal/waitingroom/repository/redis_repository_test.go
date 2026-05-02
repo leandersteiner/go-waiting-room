@@ -54,8 +54,8 @@ func TestNewSessionStatusAdmittedSession(t *testing.T) {
 
 	status := newSessionStatus(room, "session-1", 10, 10)
 
-	if status.Position != 1 {
-		t.Fatalf("Position = %d, want %d", status.Position, 1)
+	if status.Position != 0 {
+		t.Fatalf("Position = %d, want %d", status.Position, 0)
 	}
 	if status.Ahead != 0 {
 		t.Fatalf("Ahead = %d, want %d", status.Ahead, 0)
@@ -65,6 +65,31 @@ func TestNewSessionStatusAdmittedSession(t *testing.T) {
 	}
 	if !status.CanEnter {
 		t.Fatal("CanEnter = false, want true")
+	}
+}
+
+func TestNewSessionStatusFrontOfQueueBeforeWorkerAdmission(t *testing.T) {
+	room := waitingroom.WaitingRoom{
+		TenantID: "tenant-1",
+		EventID:  "event-1",
+		AdmissionPolicy: waitingroom.AdmissionPolicy{
+			AdmissionsPerSeconds: 50,
+		},
+	}
+
+	status := newSessionStatus(room, "session-1", 1, 0)
+
+	if status.Position != 1 {
+		t.Fatalf("Position = %d, want %d", status.Position, 1)
+	}
+	if status.Ahead != 0 {
+		t.Fatalf("Ahead = %d, want %d", status.Ahead, 0)
+	}
+	if status.EstimatedWaitInSeconds != 1 {
+		t.Fatalf("EstimatedWaitInSeconds = %d, want %d", status.EstimatedWaitInSeconds, 1)
+	}
+	if status.CanEnter {
+		t.Fatal("CanEnter = true, want false")
 	}
 }
 

@@ -10,6 +10,8 @@ type TokenPolicy struct {
 type WaitingRoom struct {
 	TenantID        string
 	EventID         string
+	QueueEnabled    bool
+	Version         int
 	AdmissionPolicy AdmissionPolicy
 	TokenPolicy     TokenPolicy
 }

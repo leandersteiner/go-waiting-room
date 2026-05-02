@@ -9,3 +9,12 @@ type Repository interface {
 	JoinRoom(ctx context.Context, tenantID string, eventID string, sessionID string) (SessionStatus, error)
 	IssueAdmissionToken(ctx context.Context, tenantID string, eventID string, sessionID string) (AdmissionToken, error)
 }
+
+type AdmissionProgressSubscription interface {
+	Updates() <-chan AdmissionProgress
+	Close() error
+}
+
+type AdmissionProgressSubscriber interface {
+	SubscribeAdmissionProgress(ctx context.Context, tenantID string, eventID string) (AdmissionProgressSubscription, error)
+}
