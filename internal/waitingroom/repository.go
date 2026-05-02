@@ -8,6 +8,7 @@ type Repository interface {
 	GetSessionStatus(ctx context.Context, tenantID string, eventID string, sessionID string) (SessionStatus, error)
 	JoinRoom(ctx context.Context, tenantID string, eventID string, sessionID string) (SessionStatus, error)
 	IssueAdmissionToken(ctx context.Context, tenantID string, eventID string, sessionID string) (AdmissionToken, error)
+	ReleaseAdmission(ctx context.Context, tenantID string, eventID string, sessionID string, tokenID string) (bool, error)
 }
 
 type AdmissionProgressSubscription interface {

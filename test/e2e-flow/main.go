@@ -39,6 +39,7 @@ type streamStatus struct {
 }
 
 type tokenResponse struct {
+	TokenID   string
 	TokenType string
 	Token     string
 	ExpiresIn int
@@ -91,8 +92,11 @@ func main() {
 	}
 
 	fmt.Printf("joining %d sessions against %s\n", *sessions, *baseURL)
-	joinSessions(client, *baseURL, *tenantID, *eventID, sessionIDs, *joinWorkers, stats)
+	joinErr := joinSessions(client, *baseURL, *tenantID, *eventID, sessionIDs, *joinWorkers, stats)
 	if stats.joinErrors.Load() > 0 {
+		if joinErr != nil {
+			log.Fatalf("join failed for %d sessions: %s", stats.joinErrors.Load(), joinErr)
+		}
 		log.Fatalf("join failed for %d sessions", stats.joinErrors.Load())
 	}
 
@@ -140,9 +144,11 @@ func main() {
 	}
 }
 
-func joinSessions(client *http.Client, baseURL, tenantID, eventID string, sessionIDs []string, workers int, stats *counters) {
+func joinSessions(client *http.Client, baseURL, tenantID, eventID string, sessionIDs []string, workers int, stats *counters) error {
 	jobs := make(chan string)
 	var wg sync.WaitGroup
+	var firstErr error
+	var firstErrMu sync.Mutex
 
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
@@ -151,6 +157,11 @@ func joinSessions(client *http.Client, baseURL, tenantID, eventID string, sessio
 			for sessionID := range jobs {
 				if err := joinSession(client, baseURL, tenantID, eventID, sessionID); err != nil {
 					stats.joinErrors.Add(1)
+					firstErrMu.Lock()
+					if firstErr == nil {
+						firstErr = err
+					}
+					firstErrMu.Unlock()
 					continue
 				}
 				stats.joined.Add(1)
@@ -163,6 +174,7 @@ func joinSessions(client *http.Client, baseURL, tenantID, eventID string, sessio
 	}
 	close(jobs)
 	wg.Wait()
+	return firstErr
 }
 
 func joinSession(client *http.Client, baseURL, tenantID, eventID, sessionID string) error {
@@ -384,8 +396,14 @@ func processSSEEvent(
 		return false, nil
 	}
 
-	if err := issueToken(ctx, client, baseURL, tenantID, eventID, sessionID); err != nil {
+	token, err := issueToken(ctx, client, baseURL, tenantID, eventID, sessionID)
+	if err != nil {
 		log.Printf("token %s failed: %s", sessionID, err)
+		stats.tokenErrors.Add(1)
+		return false, err
+	}
+	if err := releaseAdmission(ctx, client, baseURL, tenantID, eventID, sessionID, token.TokenID); err != nil {
+		log.Printf("release %s failed: %s", sessionID, err)
 		stats.tokenErrors.Add(1)
 		return false, err
 	}
@@ -393,13 +411,54 @@ func processSSEEvent(
 	return true, nil
 }
 
-func issueToken(ctx context.Context, client *http.Client, baseURL, tenantID, eventID, sessionID string) error {
+func issueToken(ctx context.Context, client *http.Client, baseURL, tenantID, eventID, sessionID string) (tokenResponse, error) {
 	body, err := json.Marshal(map[string]string{"SessionID": sessionID})
+	if err != nil {
+		return tokenResponse{}, err
+	}
+
+	url := fmt.Sprintf("%s/v1/tenants/%s/events/%s/queue/token", strings.TrimRight(baseURL, "/"), tenantID, eventID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return tokenResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return tokenResponse{}, err
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return tokenResponse{}, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return tokenResponse{}, fmt.Errorf("token %s returned %s: %s", sessionID, resp.Status, strings.TrimSpace(string(responseBody)))
+	}
+
+	var token tokenResponse
+	if err := json.Unmarshal(responseBody, &token); err != nil {
+		return tokenResponse{}, err
+	}
+	if token.TokenID == "" || token.TokenType == "" || token.Token == "" || token.ExpiresIn <= 0 {
+		return tokenResponse{}, fmt.Errorf("token %s returned incomplete response", sessionID)
+	}
+
+	return token, nil
+}
+
+func releaseAdmission(ctx context.Context, client *http.Client, baseURL, tenantID, eventID, sessionID, tokenID string) error {
+	body, err := json.Marshal(map[string]string{
+		"SessionID": sessionID,
+		"TokenID":   tokenID,
+	})
 	if err != nil {
 		return err
 	}
 
-	url := fmt.Sprintf("%s/v1/tenants/%s/events/%s/queue/token", strings.TrimRight(baseURL, "/"), tenantID, eventID)
+	url := fmt.Sprintf("%s/v1/tenants/%s/events/%s/queue/admission/release", strings.TrimRight(baseURL, "/"), tenantID, eventID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -417,15 +476,7 @@ func issueToken(ctx context.Context, client *http.Client, baseURL, tenantID, eve
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("token %s returned %s: %s", sessionID, resp.Status, strings.TrimSpace(string(responseBody)))
-	}
-
-	var token tokenResponse
-	if err := json.Unmarshal(responseBody, &token); err != nil {
-		return err
-	}
-	if token.TokenType == "" || token.Token == "" || token.ExpiresIn <= 0 {
-		return fmt.Errorf("token %s returned incomplete response", sessionID)
+		return fmt.Errorf("release %s returned %s: %s", sessionID, resp.Status, strings.TrimSpace(string(responseBody)))
 	}
 
 	return nil

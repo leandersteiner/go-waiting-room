@@ -65,6 +65,9 @@ func TestJWTAdmissionTokenIssuerIssuesVerifiableToken(t *testing.T) {
 	if payload.Scope != admissionTokenScope {
 		t.Fatalf("scope = %q, want %q", payload.Scope, admissionTokenScope)
 	}
+	if payload.JWTID != "jti-1" {
+		t.Fatalf("jti = %q, want jti-1", payload.JWTID)
+	}
 	if payload.ExpiresAt-payload.IssuedAt != int64((15 * time.Minute).Seconds()) {
 		t.Fatalf("ttl = %d, want 900", payload.ExpiresAt-payload.IssuedAt)
 	}

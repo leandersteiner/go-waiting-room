@@ -28,6 +28,7 @@ type AdmissionToken struct {
 	TenantID  string
 	EventID   string
 	SessionID string
+	TokenID   string
 	TokenType string
 	Token     string
 	ExpiresIn int
@@ -257,6 +258,10 @@ func encodeJWTPart(value any) (string, error) {
 func keyIDFromPublicKey(publicKey ed25519.PublicKey) string {
 	hash := sha256.Sum256(publicKey)
 	return base64.RawURLEncoding.EncodeToString(hash[:16])
+}
+
+func NewAdmissionTokenID() (string, error) {
+	return newJWTID()
 }
 
 func newJWTID() (string, error) {

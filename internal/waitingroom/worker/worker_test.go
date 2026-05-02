@@ -33,7 +33,9 @@ func TestTickAccumulatesFractionalAdmissionCredits(t *testing.T) {
 			EventID:      "event-1",
 			QueueEnabled: true,
 			AdmissionPolicy: waitingroom.AdmissionPolicy{
-				AdmissionsPerSeconds: 5,
+				AdmissionsPerSeconds:       5,
+				MaxActiveAdmissions:        10,
+				AdmissionOfferTTLInSeconds: 60,
 			},
 		},
 	}
@@ -89,15 +91,15 @@ func (r *fakeRepository) GetRoom(context.Context, string, string) (waitingroom.W
 	return r.room, nil
 }
 
-func (r *fakeRepository) AdvanceAdmission(_ context.Context, tenantID string, eventID string, amount int) (repository.AdvanceAdmissionResult, error) {
-	r.advanceAmounts = append(r.advanceAmounts, amount)
+func (r *fakeRepository) AdvanceAdmission(_ context.Context, tenantID string, eventID string, request repository.AdvanceAdmissionRequest) (repository.AdvanceAdmissionResult, error) {
+	r.advanceAmounts = append(r.advanceAmounts, request.Amount)
 	return repository.AdvanceAdmissionResult{
 		Progress: waitingroom.AdmissionProgress{
 			TenantID:        tenantID,
 			EventID:         eventID,
-			ArrivalCounter:  amount,
-			AdmittedCounter: amount,
+			ArrivalCounter:  request.Amount,
+			AdmittedCounter: request.Amount,
 		},
-		Advanced: amount,
+		Advanced: request.Amount,
 	}, nil
 }

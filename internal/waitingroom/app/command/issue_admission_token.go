@@ -13,6 +13,7 @@ type IssueAdmissionToken struct {
 }
 
 type IssueAdmissionTokenResponse struct {
+	TokenID   string
 	TokenType string
 	Token     string
 	ExpiresIn int
@@ -35,6 +36,7 @@ func (h *issueAdmissionTokenHandler) Handle(ctx context.Context, cmd IssueAdmiss
 	}
 
 	return IssueAdmissionTokenResponse{
+		TokenID:   token.TokenID,
 		TokenType: token.TokenType,
 		Token:     token.Token,
 		ExpiresIn: token.ExpiresIn,

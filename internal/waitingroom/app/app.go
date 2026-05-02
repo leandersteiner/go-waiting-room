@@ -15,6 +15,7 @@ type App struct {
 type Commands struct {
 	JoinRoom            command.JoinRoomHandler
 	IssueAdmissionToken command.IssueAdmissionTokenHandler
+	ReleaseAdmission    command.ReleaseAdmissionHandler
 }
 
 type Queries struct {
@@ -29,6 +30,7 @@ func New(repo waitingroom.Repository) *App {
 		Commands: Commands{
 			JoinRoom:            command.NewJoinRoomHandler(repo),
 			IssueAdmissionToken: command.NewIssueAdmissionTokenHandler(repo),
+			ReleaseAdmission:    command.NewReleaseAdmissionHandler(repo),
 		},
 		Queries: Queries{
 			RoomStatus:       query.NewRoomStatusHandler(repo),

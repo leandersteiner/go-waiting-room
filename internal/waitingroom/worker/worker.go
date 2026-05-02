@@ -22,7 +22,7 @@ type Repository interface {
 	TryAcquireWorkerLock(ctx context.Context, owner string, ttl time.Duration) (bool, error)
 	ListRooms(ctx context.Context) ([]repository.RoomRef, error)
 	GetRoom(ctx context.Context, tenantID string, eventID string) (waitingroom.WaitingRoom, error)
-	AdvanceAdmission(ctx context.Context, tenantID string, eventID string, amount int) (repository.AdvanceAdmissionResult, error)
+	AdvanceAdmission(ctx context.Context, tenantID string, eventID string, request repository.AdvanceAdmissionRequest) (repository.AdvanceAdmissionResult, error)
 }
 
 type Config struct {
@@ -120,7 +120,7 @@ func (w *Worker) tick(ctx context.Context, elapsed time.Duration) error {
 			w.logger.Printf("read room tenant=%s event=%s failed: %s", roomRef.TenantID, roomRef.EventID, err)
 			continue
 		}
-		if !room.QueueEnabled || room.AdmissionPolicy.AdmissionsPerSeconds <= 0 {
+		if !room.QueueEnabled || room.AdmissionPolicy.AdmissionsPerSeconds <= 0 || room.AdmissionPolicy.MaxActiveAdmissions <= 0 {
 			delete(w.credits, key)
 			continue
 		}
@@ -130,19 +130,25 @@ func (w *Worker) tick(ctx context.Context, elapsed time.Duration) error {
 			continue
 		}
 
-		result, err := w.repo.AdvanceAdmission(ctx, roomRef.TenantID, roomRef.EventID, amount)
+		result, err := w.repo.AdvanceAdmission(ctx, roomRef.TenantID, roomRef.EventID, repository.AdvanceAdmissionRequest{
+			Amount:                     amount,
+			MaxActiveAdmissions:        room.AdmissionPolicy.MaxActiveAdmissions,
+			AdmissionOfferTTLInSeconds: room.AdmissionPolicy.AdmissionOfferTTLInSeconds,
+		})
 		if err != nil {
 			w.logger.Printf("advance room tenant=%s event=%s failed: %s", roomRef.TenantID, roomRef.EventID, err)
 			continue
 		}
 		if result.Advanced > 0 {
 			w.logger.Printf(
-				"advanced room tenant=%s event=%s amount=%d admitted=%d arrived=%d",
+				"advanced room tenant=%s event=%s amount=%d admitted=%d arrived=%d active=%d offers=%d",
 				roomRef.TenantID,
 				roomRef.EventID,
 				result.Advanced,
 				result.Progress.AdmittedCounter,
 				result.Progress.ArrivalCounter,
+				result.Progress.ActiveAdmissions,
+				result.Progress.AdmissionOffers,
 			)
 		}
 	}

@@ -29,6 +29,7 @@ func (s HTTPServer) Run(srv *http.Server) error {
 	mux.HandleFunc("GET /v1/tenants/{tenantID}/events/{eventID}/queue/status/{sessionID}", s.GetRoomStatus)
 	mux.HandleFunc("GET /v1/tenants/{tenantID}/events/{eventID}/queue/stream/{sessionID}", s.GetRoomStream)
 	mux.HandleFunc("POST /v1/tenants/{tenantID}/events/{eventID}/queue/token", s.IssueAdmissionToken)
+	mux.HandleFunc("POST /v1/tenants/{tenantID}/events/{eventID}/queue/admission/release", s.ReleaseAdmission)
 	mux.HandleFunc("POST /v1/tenants/{tenantID}/events/{eventID}/queue/join", s.JoinRoom)
 	srv.Handler = mux
 	return srv.ListenAndServe()
@@ -171,6 +172,39 @@ func (s HTTPServer) IssueAdmissionToken(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+func (s HTTPServer) ReleaseAdmission(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	if strings.TrimSpace(tenantID) == "" {
+		http.Error(w, "tenantID is required", http.StatusBadRequest)
+		return
+	}
+	eventID := r.PathValue("eventID")
+	if strings.TrimSpace(eventID) == "" {
+		http.Error(w, "eventID is required", http.StatusBadRequest)
+		return
+	}
+
+	var request command.ReleaseAdmission
+	if err := decodeJSONBody(r, &request); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	request.TenantID = tenantID
+	request.EventID = eventID
+
+	response, err := s.App.Commands.ReleaseAdmission(r.Context(), request)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
 func (s HTTPServer) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
 	if strings.TrimSpace(tenantID) == "" {
@@ -217,11 +251,17 @@ func decodeJSONBody(r *http.Request, destination any) error {
 
 func writeError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, command.ErrInvalidReleaseAdmission):
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	case errors.Is(err, repository.ErrRoomNotFound):
 		http.Error(w, err.Error(), http.StatusNotFound)
 	case errors.Is(err, repository.ErrSessionNotFound):
 		http.Error(w, err.Error(), http.StatusNotFound)
 	case errors.Is(err, repository.ErrSessionNotAdmitted):
+		http.Error(w, err.Error(), http.StatusConflict)
+	case errors.Is(err, repository.ErrAdmissionCapacityFull):
+		http.Error(w, err.Error(), http.StatusConflict)
+	case errors.Is(err, repository.ErrAdmissionLeaseMismatch):
 		http.Error(w, err.Error(), http.StatusConflict)
 	default:
 		http.Error(w, err.Error(), http.StatusInternalServerError)

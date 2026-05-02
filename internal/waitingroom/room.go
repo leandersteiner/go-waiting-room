@@ -1,7 +1,9 @@
 package waitingroom
 
 type AdmissionPolicy struct {
-	AdmissionsPerSeconds int
+	AdmissionsPerSeconds       int
+	MaxActiveAdmissions        int
+	AdmissionOfferTTLInSeconds int
 }
 type TokenPolicy struct {
 	TokenTTLInSeconds int

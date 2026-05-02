@@ -24,11 +24,21 @@ docker run --rm --name waitroom-redis -p 6379:6379 -d redis
 ```
 
 Optionally configure a room. Missing config falls back to an enabled queue with
-`admission_rate=50` and `token_ttl_seconds=900`.
+`admission_rate=250`, `max_active_admissions=250`, and
+`token_ttl_seconds=900`.
 
 ```bash
-redis-cli HSET waitroom:load:main:config queue_enabled true admission_rate 500 version 1
+redis-cli HSET waitroom:load:main:config \
+  queue_enabled true \
+  admission_rate 250 \
+  max_active_admissions 500 \
+  admission_offer_ttl_seconds 60 \
+  token_ttl_seconds 900 \
+  version 1
 ```
+
+See [docs/admission-leases.md](docs/admission-leases.md) for the active lease
+model and release API.
 
 Admission tokens are Ed25519-signed JWTs. Downstream services can verify them
 without calling the waiting room by caching the JWKS from:
